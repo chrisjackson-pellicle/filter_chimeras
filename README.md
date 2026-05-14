@@ -108,7 +108,7 @@ python -c "import Bio, pandas, numpy, matplotlib, seaborn, pebble, tqdm; print('
 **4. Get the script**
 
 ```bash
-git clone https://github.com/<your-fork-or-upstream>/filter_chimeras.git
+git https://github.com/chrisjackson-pellicle/filter_chimeras.git
 cd filter_chimeras
 python filter_chimeras.py --help
 ```
