@@ -17,7 +17,7 @@ Such chimeras often cannot be inferred from the primary FASTA sequence alone. Th
 
 Running `filter_chimeras.py` does the following in order.
 
-**1. Logging and reference index**  
+**1. Create reference index**  
 Runs `bbmap.sh` to create a reference genome indexed under `<output_directory>/ref/genome/1/`.
 
 **2. Gene list from the target FASTA**  
