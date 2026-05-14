@@ -1998,14 +1998,14 @@ def parse_arguments():
                         type=float,
                         default=0.80,
                         help='The minimum percentage of the paralog sequence length retained after '
-                             'filtering contig hits via <min_seq_length> for chimera detection to be performed. '
-                             'Default is: %(default)s')
+                             'filtering contig hits via <min_seq_length> for mapping and chimera detection to be '
+                             'performed. Default is: %(default)s')
     parser.add_argument('--min_contig_number_percentage',
                         type=float,
                         default=0.80,
                         help='The minimum percentage of the total number of contig hits remaining for a given paralog '
-                             'after filtering contig hits via <min_seq_length> for chimera detection to be performed.'
-                             'Default is: %(default)s')
+                             'after filtering contig hits via <min_seq_length> for mapping and chimera detection to be '
+                             'performed. Default is: %(default)s')
     parser.add_argument('--min_samples_threshold',
                         type=float,
                         default=0.75,

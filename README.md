@@ -59,7 +59,10 @@ For each folder under `--captus_folder` or `--hybpiper_folder`:
 
 ## Assumptions and limitations
 
-- The reference should be close enough that exon-sized pieces from your assembly usually map to one primary reference sequence name when they are truly co-locus, and to different names when pieces come from different genomic regions. Fragmented references, mis-joined reference contigs, or naming that splits one biological locus across several FASTA records will weaken interpretation.
+- The genome reference used should be close enough in sequence identity to your target-capture samples such that 
+  exon-sized pieces from your target-capture assembly usually map to one primary reference contig when they are truly co-locus, and to different 
+  contigs when pieces come from different genomic loci. Fragmented references, mis-joined reference contigs, or 
+  naming that splits one biological locus across several FASTA records will weaken interpretation.
 
 ---
 
