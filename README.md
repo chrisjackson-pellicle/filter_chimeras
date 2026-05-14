@@ -8,7 +8,7 @@
 
 Phylogenetic reconstruction using sequences assembled from target-capture data often assumes that each sequence represents a single genomic locus. However, when assembling sequences from target-capture data for multi-exonic genes, `Captus` and `HybPiper` often stitch together sequences extracted from multiple contigs; these contigs usually represent individual exons, and are assembled by MEGAHIT (`Captus`) or SPAdes (`HybPiper`). This stitching is appropriate when all contigs truly come from one locus, but this is not always the case. For genes with multiple paralogs, exons from different paralogs can be artificially stitched together. The result is a chimera: a sequence that looks like one gene but is not a single orthologous locus. This can occur due to e.g. differential recovery of exons from different paralogs during target-capture, variable assembly of exons from different paralogs during assembly of target-capture data, or variable sequence identify between exons from different paralogs and sequences in the target-file used for sequence extraction. 
 
-Such chimeras often cannot inferred from the primary FASTA sequence alone. This script uses an independent reference assembly: if stitched-together sequences derived from different MEGAHIT/SPAdes contigs for a given target-capture-assembled sequence map to different reference targets, the sequence is flagged as a likely chimera.
+Such chimeras often cannot be inferred from the primary FASTA sequence alone. This script uses an independent reference assembly: if stitched-together sequences derived from different MEGAHIT/SPAdes contigs for a given target-capture-assembled sequence map to different reference targets, the sequence is flagged as a likely chimera.
 
 ---
 
@@ -109,8 +109,6 @@ git clone https://github.com/<your-fork-or-upstream>/filter_chimeras.git
 cd filter_chimeras
 python filter_chimeras.py --help
 ```
-
-There is no `pip install` step — `filter_chimeras.py` is run directly out of the cloned repository.
 
 ---
 
