@@ -117,7 +117,8 @@ python filter_chimeras.py --help
 
 ## Usage
 
-Provide either `--captus_folder` or `--hybpiper_folder` (mutually exclusive), plus the reference genome and target FASTA used for the assemblies.
+Provide either `--captus_folder` or `--hybpiper_folder` (mutually exclusive), plus the reference genome and target file 
+FASTA used for the target-capture assemblies.
 
 **Captus example**
 
