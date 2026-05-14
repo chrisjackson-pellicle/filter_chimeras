@@ -32,7 +32,7 @@ For each folder under `--captus_folder` or `--hybpiper_folder`:
 - **Gate** each stitched gene/paralog with `--min_seq_length`, `--min_length_percentage`, and `--min_contig_number_percentage`. Failing the gate skips full multi-hit testing and the sequence is flagged as 'not tested' rather than chimera vs non-chimera from mapping. See [Figure_1](https://github.com/chrisjackson-pellicle/filter_chimeras/wiki/Pre%E2%80%90map-filtering-of-stitched-and-non%E2%80%90stiched-sequences).
 
 
-- **Map** eligible multi-fragment paralogs with `mapPacBio.sh` against the indexed reference; read the SAM and compare reference sequence names across hits. Agreement → non-chimera; disagreement → chimera; ambiguous repeated subjects → `unknown_repeated_subject` (and related paths). See [Figure_2]().
+- **Map** eligible multi-fragment paralogs with `mapPacBio.sh` against the indexed reference; read the SAM and compare reference sequence names across hits. Agreement → non-chimera; disagreement → chimera; ambiguous repeated subjects → `unknown_repeated_subject` (and related paths). See [Figure_2](https://github.com/chrisjackson-pellicle/filter_chimeras/wiki/Mapping-and-chimera-detection).
 
 
 - **Write** per-sample intermediates for **mapped** paralogs (multi-fragment query FASTAs, intron FASTAs, SAMs) to `01_target_capture_seqs_mapped/<sample>/<gene>/`.
