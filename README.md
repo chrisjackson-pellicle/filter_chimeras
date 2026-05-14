@@ -29,7 +29,7 @@ For each folder under `--captus_folder` or `--hybpiper_folder`:
 - **Reconstruct** stitched coding fragments (and introns where applicable) from that sample’s assembly outputs — for `Captus`, this data is extracted from `06_assembly_annotated/<sample>_recovery_stats.tsv` plus `<sample>_hit_contigs.fasta`; `HybPiper` uses XXX.
 
 
-- **Gate** each stitched gene/paralog with `--min_seq_length`, `--min_length_percentage`, and `--min_contig_number_percentage`. Failing the gate skips full multi-hit testing and the sequence is flagged as 'not tested' rather than chimera vs non-chimera from mapping. See [Figure_1]().
+- **Gate** each stitched gene/paralog with `--min_seq_length`, `--min_length_percentage`, and `--min_contig_number_percentage`. Failing the gate skips full multi-hit testing and the sequence is flagged as 'not tested' rather than chimera vs non-chimera from mapping. See [Figure_1](https://github.com/chrisjackson-pellicle/filter_chimeras/wiki/Pre%E2%80%90map-filtering-of-stitched-and-non%E2%80%90stiched-sequences).
 
 
 - **Map** eligible multi-fragment paralogs with `mapPacBio.sh` against the indexed reference; read the SAM and compare reference sequence names across hits. Agreement → non-chimera; disagreement → chimera; ambiguous repeated subjects → `unknown_repeated_subject` (and related paths). See [Figure_2]().
