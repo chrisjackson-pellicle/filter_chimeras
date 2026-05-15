@@ -151,8 +151,8 @@ usage: filter_chimeras.py [-h] [--version] (--captus_folder CAPTUS_FOLDER |
                           [--min_seq_length MIN_SEQ_LENGTH]
                           [--min_length_percentage MIN_LENGTH_PERCENTAGE]
                           [--min_sequence_number_percentage MIN_SEQUENCE_NUMBER_PERCENTAGE]
-                          [--min_samples_threshold MIN_SAMPLES_THRESHOLD]
                           [--min_num_paralogs_per_sample MIN_NUM_PARALOGS_PER_SAMPLE]
+                          [--min_samples_threshold MIN_SAMPLES_THRESHOLD]
                           [--non_chimeric_paralog_max_count NON_CHIMERIC_PARALOG_MAX_COUNT]
                           [--pool POOL] [--threads THREADS]
                           [--intron_ref_coords_wiggle INTRON_REF_COORDS_WIGGLE]
@@ -165,9 +165,9 @@ usage: filter_chimeras.py [-h] [--version] (--captus_folder CAPTUS_FOLDER |
 positional arguments:
   reference_genome_fasta
                         High quality reference genome for mapping target-
-                        capture contigs.
-  target_file_fasta     Target FASTA used for the assembly runs (Captus or
-                        HybPiper).
+                        capture sequences.
+  target_file_fasta     Target FASTA used for the target-capture assembly runs
+                        (Captus or HybPiper).
 
 options:
   -h, --help            show this help message and exit
@@ -181,27 +181,24 @@ options:
                         Root folder for logs, reports, mapped intermediates,
                         and filtered FASTAs. Default is: output_directory
   --min_seq_length MIN_SEQ_LENGTH
-                        Minimum length for a contig-derived sequence to be
-                        mapped. Default is: 75
+                        Minimum length required for a constituent sequence
+                        from a stitched target-capture sequence to be mapped.
+                        Default is: 75
   --min_length_percentage MIN_LENGTH_PERCENTAGE
-                        The minimum percentage of the paralog sequence length
-                        retained after filtering contig hits via
-                        <min_seq_length> for chimera detection to be
-                        performed. Default is: 0.8
+                        The minimum percentage of a given stitched target-
+                        capture sequence's total length that needs to be
+                        retained after filtering its constituent sequences via
+                        `--min_seq_length`. If less than this percentage
+                        remains after filtering, no mapping and chimera
+                        detection will be performed. Default is: 0.8
   --min_sequence_number_percentage MIN_SEQUENCE_NUMBER_PERCENTAGE
                         The minimum percentage of the total number of
-                        constituent stitched sequences that need to be
-                        retained for a given paralog after filtering its
-                        constituent stitched sequences via <min_seq_length>.
-                        If less than this percentage, no mapping and chimera
-                        detection will be performed. Default is: 0.8
-  --min_samples_threshold MIN_SAMPLES_THRESHOLD
-                        For a given gene, the minimum percentage of total
-                        samples to have >= <min_num_paralogs_per_sample> non-
-                        chimeric sequences for sequences to be written to
-                        file. Useful to increase stringency of alignment
-                        sample occupancy, at the cost of fewer gene
-                        alignments. Default is: 0.75
+                        constituent sequences that need to be retained for a
+                        given stitched target-capture sequence after filtering
+                        its constituent sequences via `--min_seq_length`. If
+                        less than this percentage remains after filtering, no
+                        mapping and chimera detection will be performed.
+                        Default is: 0.8
   --min_num_paralogs_per_sample MIN_NUM_PARALOGS_PER_SAMPLE
                         For a given gene for a given sample, the minimum
                         number of non-chimeric paralog sequences recovered for
@@ -210,6 +207,13 @@ options:
                         due to polyploidy), and want to skip genes that might
                         have hidden paralogy due to sequence or assembly
                         issues. Default is: 0
+  --min_samples_threshold MIN_SAMPLES_THRESHOLD
+                        For a given gene, the minimum percentage of total
+                        samples to have >= <min_num_paralogs_per_sample> non-
+                        chimeric sequences for sequences to be written to
+                        file. Useful to increase stringency of alignment
+                        sample occupancy, at the cost of fewer gene
+                        alignments. Default is: 0.75
   --non_chimeric_paralog_max_count NON_CHIMERIC_PARALOG_MAX_COUNT
                         Cap value used by the discrete non-chimeric paralog
                         count heatmaps. Per-(gene, sample) non-chimeric

@@ -2276,18 +2276,18 @@ def parse_arguments():
     parser.add_argument('--min_seq_length',
                         type=int,
                         default=75,
-                        help='Minimum length for a target-capture sequence derived from a single contig to be mapped. Default is: %(default)s')
+                        help='Minimum length required for a constituent sequence from a stitched target-capture sequence to be mapped. Default is: %(default)s')
     parser.add_argument('--min_length_percentage',
                         type=float,
                         default=0.80,
-                        help='The minimum percentage of a given paralog sequence total length that needs to be retained after '
-                             'filtering its constituent stitched sequences via `--min_seq_length`. If less than this percentage, ' 
+                        help='The minimum percentage of a given stitched target-capture sequence\'s total length that needs to be retained after '
+                             'filtering its constituent sequences via `--min_seq_length`. If less than this percentage remains after filtering, ' 
                              'no mapping and chimera detection will be performed. Default is: %(default)s')
     parser.add_argument('--min_sequence_number_percentage',
                         type=float,
                         default=0.80,
-                        help='The minimum percentage of the total number of constituent stitched sequences that need to be retained for a given paralog '
-                             'after filtering its constituent stitched sequences via `--min_seq_length`. If less than this percentage, '
+                        help='The minimum percentage of the total number of constituent sequences that need to be retained for a given stitched target-capture sequence '
+                             'after filtering its constituent sequences via `--min_seq_length`. If less than this percentage remains after filtering, '
                              'no mapping and chimera detection will be performed. Default is: %(default)s')
     parser.add_argument('--min_num_paralogs_per_sample',
                         type=int,
