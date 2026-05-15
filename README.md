@@ -26,10 +26,10 @@ Parses the target file FASTA used in the target-capture assembly to recover a li
 **3. Per-sample chimera screen**  
 For each folder under `--captus_folder` or `--hybpiper_folder`:
 
-- **Reconstruct** stitched coding fragments (and introns where applicable) from that sample’s assembly outputs — for `Captus`, this data is extracted from `06_assembly_annotated/<sample>_recovery_stats.tsv` plus `<sample>_hit_contigs.fasta`; `HybPiper` uses XXX.
+- **Reconstruct** stitched coding fragments (and introns where applicable) from that sample’s assembly outputs — for `Captus`, from `06_assembly_annotated/<sample>_recovery_stats.tsv` plus `<sample>_hit_contigs.fasta`. For `HybPiper`, from each `<sample>/<gene>/<gene>_contigs.fasta` together with `<sample>/<gene>/<sample>/exonerate_stats.tsv` (rows under *“Hits with subsumed hits removed and overlaps trimmed”*).
 
 
-- **Gate** each stitched gene/paralog with `--min_seq_length`, `--min_length_percentage`, and `--min_contig_number_percentage`. Failing the gate skips full multi-hit testing and the sequence is flagged as 'not tested' rather than chimera vs non-chimera from mapping. See [Figure_1](https://github.com/chrisjackson-pellicle/filter_chimeras/wiki/Pre%E2%80%90map-filtering-of-stitched-and-non%E2%80%90stiched-sequences).
+- **Gate** each stitched gene/paralog with `--min_seq_length`, `--min_length_percentage`, and `--min_sequence_number_percentage`. Failing the gate skips full multi-hit testing and the sequence is flagged as 'not tested' rather than chimera vs non-chimera from mapping. See [Figure_1](https://github.com/chrisjackson-pellicle/filter_chimeras/wiki/Pre%E2%80%90map-filtering-of-stitched-and-non%E2%80%90stiched-sequences).
 
 
 - **Map** eligible multi-fragment paralogs with `mapPacBio.sh` against the indexed reference; read the SAM and compare reference sequence names across hits. Agreement → non-chimera; disagreement → chimera; ambiguous repeated subjects → `unknown_repeated_subject` (and related paths). See [Figure_2](https://github.com/chrisjackson-pellicle/filter_chimeras/wiki/Mapping-and-chimera-detection).
@@ -38,7 +38,7 @@ For each folder under `--captus_folder` or `--hybpiper_folder`:
 - **Write** per-sample intermediates for **mapped** paralogs (multi-fragment query FASTAs, intron FASTAs, SAMs) to `01_target_capture_seqs_mapped/<sample>/<gene>/`.
 
 
-- **Write** per-paralog `*_scipio_hits.fasta` (and `*_scipio_hits_introns.fasta` when introns are present) for **unmapped** paralogs to `02_target_capture_seqs_unmapped/<status>/<sample>/<gene>/`. One subfolder per gate/status: `no_chimera_as_single_contig_hit`, `no_detectable_chimera_as_single_contig_hit_after_length_filtering`, `no_detectable_chimera_as_no_seqs_left_after_length_filtering`, `no_chimera_test_performed_as_too_little_seq_length_after_length_filtering`, `no_chimera_test_performed_as_too_few_contigs_after_length_filtering`.
+- **Write** per-paralog `*_constituent_hits.fasta` (and `*_constituent_hits_introns.fasta` when introns are present) for **unmapped** paralogs to `02_target_capture_seqs_unmapped/<status>/<sample>/<gene>/`. One subfolder per gate/status: `no_chimera_as_single_contig_hit`, `no_detectable_chimera_as_single_contig_hit_after_length_filtering`, `no_detectable_chimera_as_no_seqs_left_after_length_filtering`, `no_chimera_test_performed_as_too_little_seq_length_after_length_filtering`, `no_chimera_test_performed_as_too_few_contigs_after_length_filtering`.
 
 **4. Reports and filtered FASTAs**  
 
@@ -108,7 +108,7 @@ python -c "import Bio, pandas, numpy, matplotlib, seaborn, pebble, tqdm; print('
 **4. Get the script**
 
 ```bash
-git https://github.com/chrisjackson-pellicle/filter_chimeras.git
+git clone https://github.com/chrisjackson-pellicle/filter_chimeras.git
 cd filter_chimeras
 python filter_chimeras.py --help
 ```
@@ -150,7 +150,7 @@ usage: filter_chimeras.py [-h] [--version] (--captus_folder CAPTUS_FOLDER |
                           [--output_directory OUTPUT_DIRECTORY]
                           [--min_seq_length MIN_SEQ_LENGTH]
                           [--min_length_percentage MIN_LENGTH_PERCENTAGE]
-                          [--min_contig_number_percentage MIN_CONTIG_NUMBER_PERCENTAGE]
+                          [--min_sequence_number_percentage MIN_SEQUENCE_NUMBER_PERCENTAGE]
                           [--min_samples_threshold MIN_SAMPLES_THRESHOLD]
                           [--min_num_paralogs_per_sample MIN_NUM_PARALOGS_PER_SAMPLE]
                           [--non_chimeric_paralog_max_count NON_CHIMERIC_PARALOG_MAX_COUNT]
@@ -161,13 +161,6 @@ usage: filter_chimeras.py [-h] [--version] (--captus_folder CAPTUS_FOLDER |
                           [--mappacbio_maxindel MAPPACBIO_MAXINDEL]
                           [--mappacbio_minid MAPPACBIO_MINID]
                           reference_genome_fasta target_file_fasta
-
-positional arguments:
-  reference_genome_fasta
-                        High quality reference genome for mapping target-
-                        capture contigs.
-  target_file_fasta     Target FASTA used for the assembly runs (Captus or
-                        HybPiper).
 
 positional arguments:
   reference_genome_fasta
@@ -195,11 +188,13 @@ options:
                         retained after filtering contig hits via
                         <min_seq_length> for chimera detection to be
                         performed. Default is: 0.8
-  --min_contig_number_percentage MIN_CONTIG_NUMBER_PERCENTAGE
-                        The minimum percentage of the total number of contig
-                        hits remaining for a given paralog after filtering
-                        contig hits via <min_seq_length> for chimera detection
-                        to be performed.Default is: 0.8
+  --min_sequence_number_percentage MIN_SEQUENCE_NUMBER_PERCENTAGE
+                        The minimum percentage of the total number of
+                        constituent stitched sequences that need to be
+                        retained for a given paralog after filtering its
+                        constituent stitched sequences via <min_seq_length>.
+                        If less than this percentage, no mapping and chimera
+                        detection will be performed. Default is: 0.8
   --min_samples_threshold MIN_SAMPLES_THRESHOLD
                         For a given gene, the minimum percentage of total
                         samples to have >= <min_num_paralogs_per_sample> non-
@@ -263,8 +258,8 @@ mapPacBio.sh tuning options:
 |------|----------|
 | `00_logs_and_reports/reports/` | Numbered TSV and PNG reports (`01_..tsv` through `09_..png`) — see the "Reports and filtered FASTAs" section above for what each file contains. |
 | `00_logs_and_reports/logs/` | Per-run log files. |
-| `01_target_capture_seqs_mapped/<sample>/<gene>/` | Per-paralog query FASTAs (`<paralog>_scipio_hits.fasta`), per-paralog intron FASTAs (`<paralog>_scipio_hits_introns.fasta`), and `mapPacBio.sh` SAMs for multi-fragment paralogs that went through mapping. |
-| `02_target_capture_seqs_unmapped/<status>/<sample>/<gene>/` | Per-paralog `<paralog>_scipio_hits.fasta` (+ `_introns.fasta` when present) for paralogs that bypassed mapping; one subfolder per status (e.g. `no_chimera_as_single_contig_hit/`, `no_detectable_chimera_as_single_contig_hit_after_length_filtering/`, `no_detectable_chimera_as_no_seqs_left_after_length_filtering/`, `no_chimera_test_performed_as_too_little_seq_length_after_length_filtering/`, `no_chimera_test_performed_as_too_few_contigs_after_length_filtering/`). |
+| `01_target_capture_seqs_mapped/<sample>/<gene>/` | Per-paralog query FASTAs (`<paralog>_constituent_hits.fasta`), per-paralog intron FASTAs (`<paralog>_constituent_hits_introns.fasta`), and `mapPacBio.sh` SAMs for multi-fragment paralogs that went through mapping. |
+| `02_target_capture_seqs_unmapped/<status>/<sample>/<gene>/` | Per-paralog `<paralog>_constituent_hits.fasta` (+ `_introns.fasta` when present) for paralogs that bypassed mapping; one subfolder per status (e.g. `no_chimera_as_single_contig_hit/`, `no_detectable_chimera_as_single_contig_hit_after_length_filtering/`, `no_detectable_chimera_as_no_seqs_left_after_length_filtering/`, `no_chimera_test_performed_as_too_little_seq_length_after_length_filtering/`, `no_chimera_test_performed_as_too_few_contigs_after_length_filtering/`). |
 | `03_non_chimeric_target_capture_seqs_<min_samples_threshold>/` | One `<gene>.fasta` per gene (non-chimeric exonic sequences passing thresholds), plus an `introns/` subfolder with per-gene intron FASTAs grouped by `ref_protein_coords` (see `--intron_ref_coords_wiggle`). |
 | `04_all_target_capture_seqs/` | `<gene>.all.fasta` — all recovered coding sequences per gene regardless of chimera call. |
 

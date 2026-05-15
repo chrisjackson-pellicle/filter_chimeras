@@ -32,6 +32,7 @@ The script uses BBmap.sh for genome mapping.
 import logging
 import sys
 import argparse
+import ast
 import os
 import socket
 import glob
@@ -705,7 +706,28 @@ def load_sample_nuc_seqrecords_by_gene_paralog(assembly_source, sample_path, sam
                 gene_paralog.setdefault(gene, {})['paralog_1'] = seq
         return gene_paralog
     if assembly_source == 'hybpiper':
-        logger.debug(f'HybPiper NUC load not implemented for sample {sample_name!r}; returning empty dict.')
+        # HybPiper writes one stitched-gene NUC FASTA per gene at
+        # <sample>/<gene>/<sample_name>/sequences/FNA/<gene>.FNA (single record per file).
+        # Mirror the single-paralog shape that ``hybpiper_build_gene_seq_and_intron_dicts``
+        # emits by indexing each record under ``paralog_1``.
+        try:
+            gene_dirs = sorted(os.listdir(sample_path))
+        except OSError:
+            logger.warning(f'{"[WARNING]:":10} Could not list HybPiper sample folder: {sample_path}')
+            return gene_paralog
+        for gene in gene_dirs:
+            gene_dir = os.path.join(sample_path, gene)
+            if not os.path.isdir(gene_dir):
+                continue
+            fna_path = os.path.join(gene_dir, sample_name, 'sequences', 'FNA', f'{gene}.FNA')
+            if not os.path.isfile(fna_path):
+                continue
+            try:
+                seq = next(SeqIO.parse(fna_path, 'fasta'))
+            except StopIteration:
+                logger.debug(f'Empty HybPiper FNA for sample {sample_name!r} gene {gene!r}: {fna_path}')
+                continue
+            gene_paralog.setdefault(gene, {})['paralog_1'] = seq
         return gene_paralog
     raise ValueError(f'Unknown assembly_source: {assembly_source!r}')
 
@@ -826,6 +848,7 @@ def _classify_paralog_sequences(combined_samples_dict, sample_to_gene_seqrecord_
                     chimera_count_dict[gene_name][sample]['not_tested'] += 1
                     counts['filtered_out'] += 1
                     counts['not_tested'] += 1
+                    print(f'Not tested: {sample}, {gene_name}, {paralog_name}')
                 else:
                     chimera_count_dict[gene_name][sample]['chimera_count'] += 1
                     counts['chimeric'] += 1
@@ -1282,7 +1305,7 @@ def map_target_capture_sequences_to_genome(outdirs,
                                            future_tracker,
                                            min_seq_length=75,
                                            min_length_percentage=0.80,
-                                           min_contig_number_percentage=0.80,
+                                           min_sequence_number_percentage=0.80,
                                            mappacbio_opts=None,
                                            pool=1,
                                            threads=1,
@@ -1302,10 +1325,11 @@ def map_target_capture_sequences_to_genome(outdirs,
         min_length_percentage (float): Minimum percentage of the paralog sequence length remaining after
                                       filtering contig hits via <min_seq_length> for chimera detection to be performed.
                                       Otherwise, no sequence is retained for this sample/gene. Defaults to 0.80.
-        min_contig_number_percentage (float): Minimum percentage of the total number of contig hits remaining for a
-                                             given paralog after filtering contig hits via <min_seq_length> for
-                                             chimera detection to be performed. Otherwise, no sequence is retained
-                                             for this sample/gene. Defaults to 0.80.
+        min_sequence_number_percentage (float): Minimum percentage of the total number of constituent stitched
+                                             sequences that need to be retained for a given paralog after filtering
+                                             those sequences via <min_seq_length>, for chimera detection to be
+                                             performed. Otherwise, no sequence is retained for this sample/gene.
+                                             Defaults to 0.80.
         mappacbio_opts (dict): Tuning options for mapPacBio.sh. Contains keys  ``xmx``, ``k``, ``fastareadlen``, ``maxindel``, ``minid``.
         pool (int, optional): Number of processes to run concurrently. Defaults to 1.
         threads (int, optional): Number of threads to use for each concurrent process. Defaults to 1.
@@ -1331,6 +1355,7 @@ def map_target_capture_sequences_to_genome(outdirs,
 
     worker = map_captus_stitched_contigs if assembly_source == 'captus' else map_hybpiper_stitched_contigs
 
+
     with tqdm(total=total_records, desc=f"{'':10} Mapping samples sequences to genome with {pool} workers",
               unit="samples", bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]') as progress_bar:
 
@@ -1348,7 +1373,7 @@ def map_target_capture_sequences_to_genome(outdirs,
                                              gene_list,
                                              min_seq_length,
                                              min_length_percentage,
-                                             min_contig_number_percentage,
+                                             min_sequence_number_percentage,
                                              outdirs['parent_output_directory'],
                                              outdir_mapped_seqs,
                                              outdir_unmapped_seqs,
@@ -1389,7 +1414,7 @@ def map_captus_stitched_contigs(sample_folder,
                                 gene_list,
                                 min_seq_length,
                                 min_length_percentage,
-                                min_contig_number_percentage,
+                                min_sequence_number_percentage,
                                 parent_output_directory,
                                 outdir_mapped_seqs,
                                 outdir_unmapped_seqs,
@@ -1404,7 +1429,6 @@ def map_captus_stitched_contigs(sample_folder,
 
     try:
         worker_logger = setup_worker_logger(__name__, log_queue)
-
         worker_logger.debug(f'{"[DEBUG]:":10} Mapping Captus sample: {sample_folder}...')
 
         # Build gene seq and intron records
@@ -1418,7 +1442,7 @@ def map_captus_stitched_contigs(sample_folder,
             gene_intron_seq_records_dict,
             min_seq_length,
             min_length_percentage,
-            min_contig_number_percentage,
+            min_sequence_number_percentage,
             parent_output_directory,
             outdir_mapped_seqs,
             outdir_unmapped_seqs,
@@ -1436,19 +1460,279 @@ def hybpiper_sample_name_from_folder(sample_folder):
     return os.path.basename(sample_folder.rstrip(os.sep))
 
 
-def hybpiper_build_gene_seq_and_intron_dicts_stub(sample_folder, gene_list):
-    """
-    TODO(HybPiper): Populate ``gene_seq_records_dict`` and intron records like ``captus_build_gene_seq_and_intron_records``.
+def _hybpiper_apply_query_trim_to_hit_fragment_ranges(orig_frags, strand, query_lim_orig, query_lim_trim):
+    """Adjust ``hit_HSPFragment_ranges_original`` using query-level trim (aa → nt ×3).
+
+    HybPiper writes ``query_HSP_range_limits_original`` / ``query_HSP_range_limits_trimmed`` as
+    protein alignment span limits (amino-acid coordinates). Comparing them gives how many
+    residues were removed from the query **N** terminus (5' of the protein) and **C** terminus
+    (3' of the protein). Multiply by three to convert to nucleotides and apply those removals
+    to the correct **genomic** ends of the hit fragments (list order is transcript 5'→3' as in
+    the TSV / Exonerate).
+
+    - **Plus strand (``+1``)**: transcript 5' is low genomic coordinate → trim ``delta_5_nt``
+      from the **start** of the first fragment; transcript 3' is high genomic → trim
+      ``delta_3_nt`` from the **end** of the last fragment.
+    - **Minus strand (``-1``)**: transcript 5' is high genomic coordinate → trim ``delta_5_nt``
+      from the **end** of the first fragment; transcript 3' is low genomic → trim
+      ``delta_3_nt`` from the **start** of the last fragment.
+
+    Args:
+        orig_frags: ``hit_HSPFragment_ranges_original`` as a list of ``(start, end)`` int tuples.
+        strand: ``+1`` or ``-1``.
+        query_lim_orig: ``(start_aa, end_aa)`` from column ``query_HSP_range_limits_original``.
+        query_lim_trim: ``(start_aa, end_aa)`` from column ``query_HSP_range_limits_trimmed``.
 
     Returns:
-        tuple: (sample_name, gene_seq_records_dict, gene_intron_seq_records_dict)
-
-    Each maps gene -> ``paralog_N`` -> list of exon/coding SeqRecords (one entry per separately mapped contig
-    fragment), and gene -> ``paralog_N`` -> list of intron SeqRecords (optional).
+        list: Adjusted fragment ``(start, end)`` tuples (same length as ``orig_frags``), or a
+        shallow copy of ``orig_frags`` if any adjusted interval would be empty or invalid.
     """
-    sample_name = hybpiper_sample_name_from_folder(sample_folder)
-    logger.warning(f'{"[WARNING]:":10} HybPiper sequence extraction is not implemented; skipping sample {sample_name!r}.')
-    return sample_name, {}, {}
+    if not orig_frags:
+        return []
+
+    qo_s, qo_e = int(query_lim_orig[0]), int(query_lim_orig[1])
+    qt_s, qt_e = int(query_lim_trim[0]), int(query_lim_trim[1])
+    # Amino acids removed from the protein N-terminus / C-terminus of the aligned span.
+    delta_5_aa = max(0, qt_s - qo_s)
+    delta_3_aa = max(0, qo_e - qt_e)
+    d5_nt = delta_5_aa * 3
+    d3_nt = delta_3_aa * 3
+
+    frags = [tuple(int(x) for x in r) for r in orig_frags]
+
+    def _invalid(pair):
+        s_, e_ = pair
+        return e_ <= s_
+
+    if len(frags) == 1:
+        s0, e0 = frags[0]
+        if strand == 1:
+            adj = (s0 + d5_nt, e0 - d3_nt)
+        else:
+            adj = (s0 + d3_nt, e0 - d5_nt)
+        if _invalid(adj):
+            return list(frags)
+        return [adj]
+
+    out = list(frags)
+    if strand == 1:
+        s0, e0 = out[0]
+        out[0] = (s0 + d5_nt, e0)
+        sl, el = out[-1]
+        out[-1] = (sl, el - d3_nt)
+    else:
+        s0, e0 = out[0]
+        out[0] = (s0, e0 - d5_nt)
+        sl, el = out[-1]
+        out[-1] = (sl + d3_nt, el)
+
+    if any(_invalid(t) for t in out):
+        return list(frags)
+    return out
+
+
+def _hybpiper_convert_coords_revcomp(list_of_range_tuples, raw_spades_contig_length):
+    """Convert reverse-strand hit ranges to coordinates on the reverse-complement contig.
+
+    Mirrors HybPiper's ``Exonerate.convert_coords_revcomp``: on a contig of length 873 the
+    ranges ``[(284, 377), (2, 119)]`` (transcript order, descending on the forward strand)
+    become ``[(496, 589), (754, 871)]`` (ascending on the revcomp, still transcript order).
+    The element-wise pairing with ``query_HSPFragment_ranges`` is preserved.
+    """
+    range_tuples_reversed = [tuple(reversed(r)) for r in list_of_range_tuples]
+    return [(raw_spades_contig_length - r[0], raw_spades_contig_length - r[1])
+            for r in range_tuples_reversed]
+
+
+def _hybpiper_parse_subsumed_section_rows(stats_path):
+    """Yield per-hit rows from the HybPiper ``exonerate_stats.tsv`` overlap-trim section.
+
+    Parses the "Hits with subsumed hits removed and overlaps trimmed" block. Column indices
+    match HybPiper ``write_exonerate_stats_file``:
+
+    - ``hit_id`` (3), ``query_HSP_range_limits_original`` (4), ``query_HSP_range_limits_trimmed`` (5),
+      ``query_HSPFragment_ranges`` (6), ``hit_strand`` (9),
+      ``hit_HSPFragment_ranges_original`` (12), ``3-prime_bases_trimmed`` (14).
+
+    Yields:
+        ``(hit_id, strand, query_ranges, three_prime_trim, exon_ranges_original,
+        query_lim_orig, query_lim_trim)``
+
+    ``hit_HSPFragment_ranges_trimmed`` (13) is intentionally not used: hit coordinates are
+    derived from ``hit_HSPFragment_ranges_original`` plus query-level trim (see
+    ``_hybpiper_apply_query_trim_to_hit_fragment_ranges``).
+    """
+    SECTION = 'Hits with subsumed hits removed and overlaps trimmed'
+    active_section = None
+    header_seen = False
+    with open(stats_path) as fh:
+        for line in fh:
+            line = line.rstrip('\n')
+            if not line.strip():
+                continue
+            fields = line.split('\t')
+            if not header_seen and len(fields) >= 2 and fields[1] == 'query_id':
+                header_seen = True
+                continue
+            label = fields[0].strip()
+            if label:
+                active_section = label
+            if active_section != SECTION:
+                continue
+            if len(fields) < 15:
+                continue
+            hit_id = fields[3].strip()
+            if not hit_id:
+                continue
+            try:
+                strand = int(fields[9].strip())
+            except (ValueError, TypeError):
+                continue
+            try:
+                query_ranges = [tuple(int(v) for v in r)
+                                for r in ast.literal_eval(fields[6].strip())]
+                exon_ranges_original = [tuple(int(v) for v in r)
+                                        for r in ast.literal_eval(fields[12].strip())]
+                qlo = ast.literal_eval(fields[4].strip())
+                qlt = ast.literal_eval(fields[5].strip())
+                if not (isinstance(qlo, tuple) and len(qlo) == 2
+                        and isinstance(qlt, tuple) and len(qlt) == 2):
+                    continue
+                query_lim_orig = tuple(int(x) for x in qlo)
+                query_lim_trim = tuple(int(x) for x in qlt)
+            except (ValueError, SyntaxError, TypeError):
+                continue
+            three_prime_str = fields[14].strip()
+            try:
+                three_prime_trim = (0 if three_prime_str in ('N/A', '', '-')
+                                    else int(three_prime_str))
+            except (ValueError, TypeError):
+                three_prime_trim = 0
+            yield (hit_id, strand, query_ranges, three_prime_trim, exon_ranges_original,
+                   query_lim_orig, query_lim_trim)
+
+def hybpiper_build_gene_seq_and_intron_dicts(sample_folder, gene_list):
+    """
+    From HybPiper ``<sample_folder>/<gene>/<sample_name>/exonerate_stats.tsv`` and
+    ``<sample_folder>/<gene>/<gene>_contigs.fasta``, build per-paralog exon fragments and
+    introns in the same shape that ``captus_build_gene_seq_and_intron_records`` produces.
+
+    Only rows from the "Hits with subsumed hits removed and overlaps trimmed" section of each
+    ``exonerate_stats.tsv`` are used. Each such row corresponds to one SPAdes contig hit that
+    contributed to the stitched gene sequence; for every hit:
+
+    - Hit splice coordinates are **not** taken from ``hit_HSPFragment_ranges_trimmed`` (HybPiper
+      can write inconsistent values for minus-strand overlap trim). Instead,
+      ``hit_HSPFragment_ranges_original`` is adjusted using ``query_HSP_range_limits_original``
+      vs ``query_HSP_range_limits_trimmed``: the protein N- and C-terminal trim (in aa) is
+      multiplied by 3 and applied to the correct genomic ends of the first/last hit fragment
+      for ``hit_strand`` ``+1`` / ``-1`` (see ``_hybpiper_apply_query_trim_to_hit_fragment_ranges``).
+    - ``3-prime_bases_trimmed`` is HybPiper's separate post-step for inter-hit overlap when
+      building the stitched contig; it is subtracted from the END of the last exon in oriented
+      coordinates for every strand.
+    - Every internal gap between adjacent exons is emitted as an intron ``SeqRecord``,
+      annotated with the corresponding ``ref_protein_coords`` derived element-wise from the
+      ``query_HSPFragment_ranges`` column.
+
+    HybPiper's main Exonerate output only describes the "best" stitched contig per gene, so
+    this function emits a single ``paralog_1`` per gene. Multi-paralog handling
+    (``<gene>/<sample_name>/paralogs/``) is intentionally out of scope here.
+
+    Returns:
+        tuple: ``(sample_name, gene_seq_records_dict, gene_intron_seq_records_dict)`` where
+        the two dicts are keyed ``[gene][paralog_id] -> [SeqRecord, ...]``.
+    """
+    sample_name = os.path.basename(sample_folder.rstrip(os.sep))
+    gene_list_set = set(gene_list)
+
+    gene_seq_records_dict = defaultdict(lambda: defaultdict(list))
+    gene_intron_seq_records_dict = defaultdict(lambda: defaultdict(list))
+
+    try:
+        gene_dirs = sorted(os.listdir(sample_folder))
+    except OSError:
+        return sample_name, gene_seq_records_dict, gene_intron_seq_records_dict
+
+    paralog = 'paralog_1'
+
+    for gene in gene_dirs:
+        if gene not in gene_list_set:
+            continue
+        gene_dir = os.path.join(sample_folder, gene)
+        if not os.path.isdir(gene_dir):
+            continue
+        stats_path = os.path.join(gene_dir, sample_name, 'exonerate_stats.tsv')
+        contigs_path = os.path.join(gene_dir, f'{gene}_contigs.fasta')
+        if not (os.path.isfile(stats_path) and os.path.isfile(contigs_path)):
+            continue
+
+        raw_contigs = SeqIO.to_dict(SeqIO.parse(contigs_path, 'fasta'))
+
+        for (hit_id, strand, query_ranges, three_prime_trim, exon_ranges_original,
+             query_lim_orig, query_lim_trim) in _hybpiper_parse_subsumed_section_rows(stats_path):
+
+            if hit_id not in raw_contigs:
+                continue
+            raw_contig = raw_contigs[hit_id]
+            contig_len = len(raw_contig.seq)
+
+            exon_ranges = _hybpiper_apply_query_trim_to_hit_fragment_ranges(
+                exon_ranges_original, strand, query_lim_orig, query_lim_trim)
+
+            # Put both strands on the same footing: after orientation handling the exon ranges
+            # are ascending and in transcript (5'->3') order, matching ``query_ranges`` element
+            # for element.
+            if strand == -1:
+                exon_ranges_oriented = _hybpiper_convert_coords_revcomp(exon_ranges, contig_len)
+                contig_seq = raw_contig.seq.reverse_complement()
+            else:
+                exon_ranges_oriented = list(exon_ranges)
+                contig_seq = raw_contig.seq
+
+            # Concatenate exon slices; subtract 3-prime overlap (HybPiper post-step) from the last
+            # oriented exon for both strands.
+            cds_seq = ''
+            for i, (start, end) in enumerate(exon_ranges_oriented):
+                if i == len(exon_ranges_oriented) - 1 and three_prime_trim > 0:
+                    end = end - three_prime_trim
+                if end <= start:
+                    continue
+                cds_seq = cds_seq + contig_seq[start:end]
+            if not cds_seq:
+                continue
+
+            seqrecord = SeqRecord(seq=cds_seq,
+                                  name=raw_contig.name,
+                                  id=raw_contig.id,
+                                  description=raw_contig.description)
+            gene_seq_records_dict[gene][paralog].append(seqrecord)
+
+            # Derive introns from internal gaps between adjacent exons. ``query_ranges`` is
+            # paired element-wise with ``exon_ranges_oriented`` to give the protein-coord
+            # span of each intron junction.
+            if len(exon_ranges_oriented) <= 1:
+                continue
+            paired = list(zip(exon_ranges_oriented, query_ranges))
+            prefix = f'{sample_name}__{gene}__00'
+            for intron_idx, (((s1, e1), (qs1, qe1)),
+                             ((s2, e2), (qs2, qe2))) in enumerate(zip(paired, paired[1:])):
+                intron_start = e1
+                intron_end = s2
+                if intron_end <= intron_start:
+                    continue
+                intron_seq = contig_seq[intron_start:intron_end]
+                intron_ref_start = min(qe1, qe2)
+                intron_ref_end = max(qs1, qs2)
+                ref_coord_str = f'{intron_ref_start}-{intron_ref_end}'
+                description = f'{raw_contig.description} ref_protein_coords:{ref_coord_str}'
+                intron_id = f'{prefix}_{raw_contig.id}_i{intron_idx}'
+                gene_intron_seq_records_dict[gene][paralog].append(
+                    SeqRecord(seq=intron_seq,
+                              name=intron_id,
+                              id=intron_id,
+                              description=description))
+
+    return sample_name, gene_seq_records_dict, gene_intron_seq_records_dict
 
 
 def captus_build_gene_seq_and_intron_records(sample_folder, gene_list):
@@ -1590,24 +1874,24 @@ def captus_build_gene_seq_and_intron_records(sample_folder, gene_list):
 def map_hybpiper_stitched_contigs(sample_folder,
                                   log_queue,
                                   gene_list,
-                                  reference_genome_fasta,
-                                  assembly_source,
-                                  sample_parent_folder,
                                   min_seq_length,
                                   min_length_percentage,
-                                  min_contig_number_percentage,
+                                  min_sequence_number_percentage,
                                   parent_output_directory,
                                   outdir_mapped_seqs,
                                   outdir_unmapped_seqs,
-                                  bbmap_Xmx,
                                   mappacbio_opts,
                                   threads):
-    """Process one HybPiper sample; same worker contract as ``map_captus_stitched_contigs``."""
+    """Process one HybPiper sample; build exon/intron records, then run shared chimera mapping.
+    
+    Returns:
+        tuple: (sample_name, sample_dict, gene_intron_seq_records_dict picklable plain dict)
+    """
     try:
         worker_logger = setup_worker_logger(__name__, log_queue)
         worker_logger.debug(f'{"[DEBUG]:":10} Mapping HybPiper sample: {sample_folder}...')
 
-        sample_name, gseq, gint = hybpiper_build_gene_seq_and_intron_dicts_stub(sample_folder, gene_list)
+        sample_name, gseq, gint = hybpiper_build_gene_seq_and_intron_dicts(sample_folder, gene_list)
 
         gene_seq_records_dict = defaultdict(lambda: defaultdict(list))
         for gene, paralog_map in (gseq or {}).items():
@@ -1632,11 +1916,10 @@ def map_hybpiper_stitched_contigs(sample_folder,
             gene_intron_seq_records_dict,
             min_seq_length,
             min_length_percentage,
-            min_contig_number_percentage,
+            min_sequence_number_percentage,
             parent_output_directory,
             outdir_mapped_seqs,
             outdir_unmapped_seqs,
-            bbmap_Xmx,
             mappacbio_opts,
             threads=threads)
         return True, (sample_name, sample_dict, plain_introns)
@@ -1666,18 +1949,18 @@ def _strip_ns_inplace_on_fragments(node_list):
 
 
 def _write_unmapped_paralog_fasta(sample_name, gene, paralog, exon_records, intron_records, status, outdir_unmapped):
-    """Write per-paralog ``*_scipio_hits.fasta`` (+ introns) for paralogs that bypass genome mapping.
+    """Write per-paralog ``*_constituent_hits.fasta`` (+ introns) for paralogs that bypass genome mapping.
 
-    Files land under ``{outdir_unmapped}/{status}/{sample_name}/{gene}/{paralog}_scipio_hits.fasta`` so
+    Files land under ``{outdir_unmapped}/{status}/{sample_name}/{gene}/{paralog}_constituent_hits.fasta`` so
     each chimera-status bucket can be inspected independently. ``exon_records`` may be a single
     ``SeqRecord`` or a list/iterable of ``SeqRecord`` (``SeqIO.write`` accepts both).
     """
     status_dir = createfolder(f'{outdir_unmapped}/{status}/{sample_name}/{gene}')
-    exon_path = f'{status_dir}/{paralog}_scipio_hits.fasta'
+    exon_path = f'{status_dir}/{paralog}_constituent_hits.fasta'
     with open(exon_path, 'w') as fh:
         SeqIO.write(exon_records, fh, 'fasta')
     if intron_records:
-        intron_path = f'{status_dir}/{paralog}_scipio_hits_introns.fasta'
+        intron_path = f'{status_dir}/{paralog}_constituent_hits_introns.fasta'
         with open(intron_path, 'w') as fh:
             SeqIO.write(intron_records, fh, 'fasta')
 
@@ -1795,7 +2078,7 @@ def _multihit_status_from_sam(worker_logger, sample_name, gene, paralog,
                 worker_logger.debug(
                     f'{"[WARNING]:":10} Sample {sample_name}, gene {gene}: subject {subject_contig_name} '
                     f'occurs more ({cnt}) than the number of times the query {query} occurs in the '
-                    f'"{paralog}_scipio_hits.fasta" file ({query_count}). Sequence will be flagged as '
+                    f'"{paralog}_constituent_hits.fasta" file ({query_count}). Sequence will be flagged as '
                     f'"unknown_repeated_subject".')
                 unknown_repeated_subject = True
 
@@ -1818,7 +2101,7 @@ def _multihit_status_from_sam(worker_logger, sample_name, gene, paralog,
                         worker_logger.debug(
                             f'{"[WARNING]:":10} Sample {sample_name}, gene {gene}: subject {subject} '
                             f'occurs more ({rem_subj_count}) than the number of times the query {remaining_query} '
-                            f'occurs in the "{paralog}_scipio_hits.fasta" file ({remaining_query_count}). Sequence '
+                            f'occurs in the "{paralog}_constituent_hits.fasta" file ({remaining_query_count}). Sequence '
                             f'will be flagged as "unknown_repeated_subject".')
                         unknown_repeated_subject = True
 
@@ -1835,7 +2118,7 @@ def map_sample_stitched_contigs_core(worker_logger,
                                      gene_intron_seq_records_dict,
                                      min_seq_length,
                                      min_length_percentage,
-                                     min_contig_number_percentage,
+                                     min_sequence_number_percentage,
                                      parent_output_directory,
                                      outdir,
                                      outdir_unmapped,
@@ -1845,7 +2128,7 @@ def map_sample_stitched_contigs_core(worker_logger,
     Shared chimera logic: strip Ns from fragments, apply length gates, mapPacBio when needed, classify multi-hit.
 
     Nucleotide ``N`` is removed from each exon fragment **before** length-based gates
-    (``_paralog_fragment_stats`` / ``min_length_percentage`` / ``min_contig_number_percentage``) so those
+    (``_paralog_fragment_stats`` / ``min_length_percentage`` / ``min_sequence_number_percentage``) so those
     thresholds apply to effective sequence length.
 
     Args:
@@ -1855,7 +2138,7 @@ def map_sample_stitched_contigs_core(worker_logger,
         gene_intron_seq_records_dict: gene -> paralog -> list of intron SeqRecords.
         parent_output_directory: Passed to mapPacBio ``path=`` (reference index location).
         outdir: Base directory for per-sample mapping outputs (mapped paralogs).
-        outdir_unmapped: Base directory for paralogs that bypass mapping; ``*_scipio_hits.fasta`` (+ introns)
+        outdir_unmapped: Base directory for paralogs that bypass mapping; ``*_constituent_hits.fasta`` (+ introns)
             are written under ``{outdir_unmapped}/{status}/{sample_name}/{gene}/`` per chimera-status bucket.
         mappacbio_opts (dict): Tuning options forwarded to ``_run_map_pac_bio``. 
         threads: Number of threads to use for mapping.
@@ -1869,7 +2152,7 @@ def map_sample_stitched_contigs_core(worker_logger,
             _strip_ns_inplace_on_fragments(node_list)
             n_frag, total_bp, n_ok, sum_ok = _paralog_fragment_stats(node_list, min_seq_length)
             passes_length = (sum_ok / total_bp) >= min_length_percentage
-            passes_contig = (n_ok / n_frag) >= min_contig_number_percentage
+            passes_contig = (n_ok / n_frag) >= min_sequence_number_percentage
 
             pd = sample_dict.setdefault(gene, {})
 
@@ -1925,7 +2208,7 @@ def map_sample_stitched_contigs_core(worker_logger,
 
             # Multi-fragment: write FASTA, map, classify from SAM
             gene_dir = createfolder(f'{outdir}/{sample_name}/{gene}')
-            outfile_gene = f'{gene_dir}/{paralog}_scipio_hits.fasta'
+            outfile_gene = f'{gene_dir}/{paralog}_constituent_hits.fasta'
             seqs_filtered = _filter_fragments_by_min_length(
                 node_list, min_seq_length, worker_logger, sample_name, gene, paralog)
 
@@ -1933,7 +2216,7 @@ def map_sample_stitched_contigs_core(worker_logger,
                 SeqIO.write(seqs_filtered, out_fh, 'fasta')
 
             if introns:
-                intron_path = f'{gene_dir}/{paralog}_scipio_hits_introns.fasta'
+                intron_path = f'{gene_dir}/{paralog}_constituent_hits_introns.fasta'
                 with open(intron_path, 'w') as out_fh:
                     SeqIO.write(introns, out_fh, 'fasta')
 
@@ -1981,10 +2264,10 @@ def parse_arguments():
                            help='Parent folder containing HybPiper sample output folders.')
     parser.add_argument('reference_genome_fasta',
                         type=str,
-                        help='High quality reference genome for mapping target-capture contigs.')
+                        help='High quality reference genome for mapping target-capture sequences.')
     parser.add_argument('target_file_fasta',
                         type=str,
-                        help='Target FASTA used for the assembly runs (Captus or HybPiper).')
+                        help='Target FASTA used for the target-capture assembly runs (Captus or HybPiper).')
     parser.add_argument('--output_directory',
                         type=str,
                         default='output_directory',
@@ -1993,26 +2276,19 @@ def parse_arguments():
     parser.add_argument('--min_seq_length',
                         type=int,
                         default=75,
-                        help='Minimum length for a contig-derived sequence to be mapped. Default is: %(default)s')
+                        help='Minimum length for a target-capture sequence derived from a single contig to be mapped. Default is: %(default)s')
     parser.add_argument('--min_length_percentage',
                         type=float,
                         default=0.80,
-                        help='The minimum percentage of the paralog sequence length retained after '
-                             'filtering contig hits via <min_seq_length> for mapping and chimera detection to be '
-                             'performed. Default is: %(default)s')
-    parser.add_argument('--min_contig_number_percentage',
+                        help='The minimum percentage of a given paralog sequence total length that needs to be retained after '
+                             'filtering its constituent stitched sequences via `--min_seq_length`. If less than this percentage, ' 
+                             'no mapping and chimera detection will be performed. Default is: %(default)s')
+    parser.add_argument('--min_sequence_number_percentage',
                         type=float,
                         default=0.80,
-                        help='The minimum percentage of the total number of contig hits remaining for a given paralog '
-                             'after filtering contig hits via <min_seq_length> for mapping and chimera detection to be '
-                             'performed. Default is: %(default)s')
-    parser.add_argument('--min_samples_threshold',
-                        type=float,
-                        default=0.75,
-                        help='For a given gene, the minimum percentage of total samples to have '
-                             '>= <min_num_paralogs_per_sample> non-chimeric sequences for sequences to be written to '
-                             'file. Useful to increase stringency of alignment sample occupancy, at the cost of fewer '
-                             'gene alignments. Default is: %(default)s')
+                        help='The minimum percentage of the total number of constituent stitched sequences that need to be retained for a given paralog '
+                             'after filtering its constituent stitched sequences via `--min_seq_length`. If less than this percentage, '
+                             'no mapping and chimera detection will be performed. Default is: %(default)s')
     parser.add_argument('--min_num_paralogs_per_sample',
                         type=int,
                         default=0,
@@ -2020,6 +2296,13 @@ def parse_arguments():
                              'sequences recovered for the sequences to be written to file. This can be useful when you '
                              'expect paralogs to be present (e.g. due to polyploidy), and want to skip genes that '
                              'might have hidden paralogy due to sequence or assembly issues. Default is: %(default)s')
+    parser.add_argument('--min_samples_threshold',
+                        type=float,
+                        default=0.75,
+                        help='For a given gene, the minimum percentage of total samples to have '
+                             '>= <min_num_paralogs_per_sample> non-chimeric sequences for sequences to be written to '
+                             'file. Useful to increase stringency of alignment sample occupancy, at the cost of fewer '
+                             'gene alignments. Default is: %(default)s')
     parser.add_argument('--non_chimeric_paralog_max_count',
                         type=int,
                         default=10,
@@ -2125,7 +2408,7 @@ def main():
                                                future_tracker,
                                                args.min_seq_length,
                                                args.min_length_percentage,
-                                               args.min_contig_number_percentage,
+                                               args.min_sequence_number_percentage,
                                                {'xmx': args.bbmap_Xmx,
                                                 'k': args.mappacbio_k,
                                                 'fastareadlen': args.mappacbio_fastareadlen,
